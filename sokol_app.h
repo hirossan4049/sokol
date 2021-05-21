@@ -1034,6 +1034,7 @@ typedef enum sapp_event_type {
     SAPP_EVENTTYPE_KEY_DOWN,
     SAPP_EVENTTYPE_KEY_UP,
     SAPP_EVENTTYPE_CHAR,
+    SAPP_EVENTTYPE_CJK_INPUT,
     SAPP_EVENTTYPE_MOUSE_DOWN,
     SAPP_EVENTTYPE_MOUSE_UP,
     SAPP_EVENTTYPE_MOUSE_SCROLL,
@@ -1261,6 +1262,19 @@ typedef struct sapp_event {
     int window_height;
     int framebuffer_width;              // = window_width * dpi_scale
     int framebuffer_height;             // = window_height * dpi_scale
+
+    char* cjk_pending;
+    char* cjk_confirm;
+    
+    int cjk_length;
+    int cjk_first;
+    int cjk_caret;
+
+    // FIXME: enum
+    int cjk_input_mode;
+    // 0 : no japanese
+    // 1 : pending
+    // 2 : confirm
 } sapp_event;
 
 /*
@@ -1769,6 +1783,7 @@ inline void sapp_run(const sapp_desc& desc) { return sapp_run(&desc); }
 #elif defined(_SAPP_LINUX)
     #define GL_GLEXT_PROTOTYPES
     #include <X11/Xlib.h>
+    #include <X11/Xos.h>
     #include <X11/Xutil.h>
     #include <X11/XKBlib.h>
     #include <X11/keysym.h>
@@ -1779,6 +1794,7 @@ inline void sapp_run(const sapp_desc& desc) { return sapp_run(&desc); }
     #include <X11/Xmd.h> /* CARD32 */
     #include <dlfcn.h> /* dlopen, dlsym, dlclose */
     #include <limits.h> /* LONG_MAX */
+    #include <locale.h>
     #include <pthread.h>    /* only used a linker-guard, search for _sapp_linux_run() and see first comment */
 #endif
 
@@ -10457,6 +10473,36 @@ _SOKOL_PRIVATE void _sapp_x11_process_event(XEvent* event) {
     }
 }
 
+// MARK: CJK IME callback
+static void preedit_draw_callback(
+    XIM xim,
+    XPointer client_data,
+    XIMPreeditDrawCallbackStruct *call_data)
+{
+    XIMText *xim_text = call_data->text;
+    if (xim_text != NULL) {
+        //printf("Draw callback string: %s, length: %d, first: %d, caret: %d\n", xim_text->string.multi_byte, call_data->chg_length, call_data->chg_first, call_data->caret);
+        //_sapp_init_event(SAPP_EVENTTYPE_CKJ_INPUT);
+        _sapp.event.cjk_pending = xim_text->string.multi_byte;
+        _sapp.event.cjk_length  = call_data->chg_length;
+        _sapp.event.cjk_first   = call_data->chg_first;
+        _sapp.event.cjk_caret   = call_data->caret;
+        _sapp.event.cjk_input_mode = 1;
+        _sapp_call_event(&_sapp.event);
+    } else {
+        //printf("Draw callback string: (DELETED), length: %d, first: %d, caret: %d\n", call_data->chg_length, call_data->chg_first, call_data->caret);
+    }
+}
+
+// FIXME: mozc can't move cursor pos.
+void send_spot(XIC ic, XPoint nspot) {
+    XVaNestedList preedit_attr;
+    preedit_attr = XVaCreateNestedList(0, XNSpotLocation, &nspot, NULL);
+    XSetICValues(ic, XNPreeditAttributes, preedit_attr, NULL);
+    XFree(preedit_attr);
+}
+
+
 _SOKOL_PRIVATE void _sapp_linux_run(const sapp_desc* desc) {
     /* The following lines are here to trigger a linker error instead of an
         obscure runtime error if the user has forgotten to add -pthread to
@@ -10468,6 +10514,9 @@ _SOKOL_PRIVATE void _sapp_linux_run(const sapp_desc* desc) {
 
     _sapp_init_state(desc);
     _sapp.x11.window_state = NormalState;
+
+    setlocale(LC_CTYPE, "");
+    XSetLocaleModifiers("");
 
     XInitThreads();
     XrmInitialize();
@@ -10497,13 +10546,97 @@ _SOKOL_PRIVATE void _sapp_linux_run(const sapp_desc* desc) {
     _sapp_x11_query_window_size();
     _sapp_glx_swapinterval(_sapp.swap_interval);
     XFlush(_sapp.x11.display);
+
+    // TODO: CJK
+    XIMCallback draw_callback;
+    draw_callback.client_data = NULL;
+    draw_callback.callback = (XIMProc)preedit_draw_callback;
+
+    XVaNestedList preedit_attributes = XVaCreateNestedList(
+        0,
+        XNPreeditDrawCallback, &draw_callback,
+        NULL
+    );
+
+    XIM xim = XOpenIM(_sapp.x11.display, NULL, NULL, NULL);
+    XIC ic = XCreateIC(
+               xim,
+               XNInputStyle, XIMPreeditCallbacks | XIMStatusNothing,
+               XNClientWindow, _sapp.x11.window,
+               XNFocusWindow, _sapp.x11.window,
+               XNPreeditAttributes, preedit_attributes,
+               NULL
+            );
+    XSetICFocus(ic);
+    //XSelectInput(_sapp.x11.display, _sapp.x11.window, KeyPressMask);
+    XPoint spot;
+    spot.x = 0;
+    spot.y = 0;
+    // mozc not working
+    send_spot(ic, spot);
+
+    static char *buff;
+    size_t buff_size = 16;
+    buff = (char *)malloc(buff_size);
+
     while (!_sapp.quit_ordered) {
         _sapp_glx_make_current();
         int count = XPending(_sapp.x11.display);
         while (count--) {
             XEvent event;
+            KeySym ksym;
+            Status status;
             XNextEvent(_sapp.x11.display, &event);
-            _sapp_x11_process_event(&event);
+            //_sapp_x11_process_event(&event);
+
+            if (XFilterEvent(&event, None)) {
+                //continue;
+            }else{
+                // TODO'
+                if (event.type == KeyPress) {
+                    //printf("event.type keypress-------------\n");
+
+                    int keycode = event.xkey.keycode;
+                    if (keycode){
+                        const sapp_keycode key = _sapp_x11_translate_key(keycode);
+                        const uint32_t mods = _sapp_x11_mods(event.xkey.state);
+                        if (mods != 0){
+                            //printf(" mods is %p \n", mods);
+                            _sapp_x11_process_event(&event);
+                            continue;
+                        }
+                    }
+                    spot.x += 20;
+                    spot.y += 20;
+                    send_spot(ic, spot);
+
+                    size_t c = Xutf8LookupString(ic, &event.xkey,
+                                                 buff, buff_size - 1,
+                                                 &ksym, &status);
+                    if (status == XBufferOverflow) {
+                        //printf("reallocate to the size of: %lu\n", c + 1);
+                        buff = realloc(buff, c + 1);
+                        c = XmbLookupString(ic, &event.xkey,
+                                            buff, c,
+                                            &ksym, &status);
+                    }
+                    if (c) {
+                        spot.x += 20;
+                        spot.y += 20;
+                        send_spot(ic, spot);
+                        buff[c] = 0;
+                        // confirm
+                        //printf("delievered string: %s\n", buff);
+                        //_sapp_init_event(SAPP_EVENTTYPE_CKJ_INPUT);
+                        _sapp.event.cjk_confirm = buff;
+                        _sapp.event.cjk_input_mode = 2;
+                        _sapp_call_event(&_sapp.event);
+                    }
+                }else{
+                    _sapp_x11_process_event(&event);
+                }
+            }
+
         }
         _sapp_frame();
         _sapp_glx_swap_buffers();
