@@ -1190,6 +1190,11 @@ typedef enum sapp_keycode {
     SAPP_KEYCODE_MENU             = 348,
 } sapp_keycode;
 
+typedef enum sapp_cjk_input_type {
+    SAPP_CJKINPUTTYPE_PENDING,
+    SAPP_CJKINPUTTYPE_CONFIRM
+} sapp_cjk_input_type;
+
 /*
     sapp_touchpoint
 
@@ -1271,7 +1276,8 @@ typedef struct sapp_event {
     int cjk_caret;
 
     // FIXME: enum
-    int cjk_input_mode;
+    // int cjk_input_mode;
+    sapp_cjk_input_type cjk_input_type;
     // 0 : no japanese
     // 1 : pending
     // 2 : confirm
@@ -9942,6 +9948,8 @@ _SOKOL_PRIVATE void _sapp_x11_char_event(uint32_t chr, bool repeat, uint32_t mod
     }
 }
 
+// _SOKOL_PRIVATE void _sapp_x11_cjk_event(char* buff, )
+
 _SOKOL_PRIVATE sapp_keycode _sapp_x11_translate_key(int scancode) {
     int dummy;
     KeySym* keysyms = XGetKeyboardMapping(_sapp.x11.display, scancode, 1, &dummy);
@@ -10481,16 +10489,16 @@ static void preedit_draw_callback(
 {
     XIMText *xim_text = call_data->text;
     if (xim_text != NULL) {
-        //printf("Draw callback string: %s, length: %d, first: %d, caret: %d\n", xim_text->string.multi_byte, call_data->chg_length, call_data->chg_first, call_data->caret);
-        //_sapp_init_event(SAPP_EVENTTYPE_CKJ_INPUT);
+        // printf("Draw callback string: %s, length: %d, first: %d, caret: %d\n", xim_text->string.multi_byte, call_data->chg_length, call_data->chg_first, call_data->caret);
+        _sapp_init_event(SAPP_EVENTTYPE_CJK_INPUT);
         _sapp.event.cjk_pending = xim_text->string.multi_byte;
         _sapp.event.cjk_length  = call_data->chg_length;
         _sapp.event.cjk_first   = call_data->chg_first;
         _sapp.event.cjk_caret   = call_data->caret;
-        _sapp.event.cjk_input_mode = 1;
+        _sapp.event.cjk_input_type = SAPP_CJKINPUTTYPE_PENDING;
         _sapp_call_event(&_sapp.event);
     } else {
-        //printf("Draw callback string: (DELETED), length: %d, first: %d, caret: %d\n", call_data->chg_length, call_data->chg_first, call_data->caret);
+        printf("Draw callback string: (DELETED), length: %d, first: %d, caret: %d\n", call_data->chg_length, call_data->chg_first, call_data->caret);
     }
 }
 
@@ -10597,6 +10605,7 @@ _SOKOL_PRIVATE void _sapp_linux_run(const sapp_desc* desc) {
                     //printf("event.type keypress-------------\n");
 
                     int keycode = event.xkey.keycode;
+                    //printf("%d", keycode);
                     if (keycode){
                         const sapp_keycode key = _sapp_x11_translate_key(keycode);
                         const uint32_t mods = _sapp_x11_mods(event.xkey.state);
@@ -10613,8 +10622,9 @@ _SOKOL_PRIVATE void _sapp_linux_run(const sapp_desc* desc) {
                     size_t c = Xutf8LookupString(ic, &event.xkey,
                                                  buff, buff_size - 1,
                                                  &ksym, &status);
+
                     if (status == XBufferOverflow) {
-                        //printf("reallocate to the size of: %lu\n", c + 1);
+                        printf("reallocate to the size of: %lu\n", c + 1);
                         buff = realloc(buff, c + 1);
                         c = XmbLookupString(ic, &event.xkey,
                                             buff, c,
@@ -10626,10 +10636,10 @@ _SOKOL_PRIVATE void _sapp_linux_run(const sapp_desc* desc) {
                         send_spot(ic, spot);
                         buff[c] = 0;
                         // confirm
-                        //printf("delievered string: %s\n", buff);
-                        //_sapp_init_event(SAPP_EVENTTYPE_CKJ_INPUT);
+                        printf("delievered string: %s\n", buff);
+                        _sapp_init_event(SAPP_EVENTTYPE_CKJ_INPUT);
                         _sapp.event.cjk_confirm = buff;
-                        _sapp.event.cjk_input_mode = 2;
+                        _sapp.event.cjk_input_type = SAPP_CJKINPUTTYPE_CONFIRM;
                         _sapp_call_event(&_sapp.event);
                     }
                 }else{
