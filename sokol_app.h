@@ -10206,7 +10206,7 @@ _SOKOL_PRIVATE bool _sapp_x11_parse_dropped_files_list(const char* src) {
 static bool _sapp_x11_keycodes[256];
 
 _SOKOL_PRIVATE void _sapp_x11_process_event(XEvent* event) {
-    Bool filtered = XFilterEvent(event, None);
+    // Bool filtered = XFilterEvent(event, None);
     switch (event->type) {
         case GenericEvent:
             if (_sapp.mouse.locked && _sapp.x11.xi.available) {
@@ -10354,7 +10354,10 @@ _SOKOL_PRIVATE void _sapp_x11_process_event(XEvent* event) {
             }
             break;
         case ClientMessage:
-            if (filtered) {
+            // if (filtered) {
+            //     return;
+            // }
+            if (XFilterEvent(event, None)) {
                 return;
             }
             if (event->xclient.message_type == _sapp.x11.WM_PROTOCOLS) {
@@ -10447,6 +10450,7 @@ _SOKOL_PRIVATE void _sapp_x11_process_event(XEvent* event) {
             }
             break;
         case SelectionNotify:
+            printf("SelectionNotify!!!!=\n");
             if (event->xselection.property == _sapp.x11.xdnd.XdndSelection) {
                 char* data = 0;
                 uint32_t result = _sapp_x11_get_window_property(event->xselection.requestor,
@@ -10489,14 +10493,23 @@ static void preedit_draw_callback(
 {
     XIMText *xim_text = call_data->text;
     if (xim_text != NULL) {
-        // printf("Draw callback string: %s, length: %d, first: %d, caret: %d\n", xim_text->string.multi_byte, call_data->chg_length, call_data->chg_first, call_data->caret);
+        printf("Draw callback string: %s, length: %d, first: %d, caret: %d\n", xim_text->string.multi_byte, call_data->chg_length, call_data->chg_first, call_data->caret);
         _sapp_init_event(SAPP_EVENTTYPE_CJK_INPUT);
+        printf("sapp init event\n");
         _sapp.event.cjk_pending = xim_text->string.multi_byte;
+        printf("cjk pending\n");
         _sapp.event.cjk_length  = call_data->chg_length;
+        printf("cjk length\n");
         _sapp.event.cjk_first   = call_data->chg_first;
+        printf("cjk firytijerw\n");
         _sapp.event.cjk_caret   = call_data->caret;
+        printf("cjk caret\n");
         _sapp.event.cjk_input_type = SAPP_CJKINPUTTYPE_PENDING;
+        printf("cjk input type\n");
         _sapp_call_event(&_sapp.event);
+        printf("sapp call event done!!!!!\n");
+        printf("==================================\n");
+
     } else {
         printf("Draw callback string: (DELETED), length: %d, first: %d, caret: %d\n", call_data->chg_length, call_data->chg_first, call_data->caret);
     }
@@ -10602,7 +10615,7 @@ _SOKOL_PRIVATE void _sapp_linux_run(const sapp_desc* desc) {
             }else{
                 // TODO'
                 if (event.type == KeyPress) {
-                    //printf("event.type keypress-------------\n");
+                    // printf("event.type keypress-------------\n");
 
                     int keycode = event.xkey.keycode;
                     //printf("%d", keycode);
@@ -10610,7 +10623,7 @@ _SOKOL_PRIVATE void _sapp_linux_run(const sapp_desc* desc) {
                         const sapp_keycode key = _sapp_x11_translate_key(keycode);
                         const uint32_t mods = _sapp_x11_mods(event.xkey.state);
                         if (mods != 0){
-                            //printf(" mods is %p \n", mods);
+                            // printf(" mods is %p \n", mods);
                             _sapp_x11_process_event(&event);
                             continue;
                         }
@@ -10618,10 +10631,14 @@ _SOKOL_PRIVATE void _sapp_linux_run(const sapp_desc* desc) {
                     spot.x += 20;
                     spot.y += 20;
                     send_spot(ic, spot);
+                    printf("send_spot!\n");
 
                     size_t c = Xutf8LookupString(ic, &event.xkey,
                                                  buff, buff_size - 1,
                                                  &ksym, &status);
+
+                    printf("Xutf8LookupString is %zu", c);
+                    printf("buff is: %s\n", buff);
 
                     if (status == XBufferOverflow) {
                         printf("reallocate to the size of: %lu\n", c + 1);
@@ -10636,13 +10653,14 @@ _SOKOL_PRIVATE void _sapp_linux_run(const sapp_desc* desc) {
                         send_spot(ic, spot);
                         buff[c] = 0;
                         // confirm
-                        printf("delievered string: %s\n", buff);
-                        _sapp_init_event(SAPP_EVENTTYPE_CKJ_INPUT);
+                        // printf("delievered string: %s\n", buff);
+                        _sapp_init_event(SAPP_EVENTTYPE_CJK_INPUT);
                         _sapp.event.cjk_confirm = buff;
                         _sapp.event.cjk_input_type = SAPP_CJKINPUTTYPE_CONFIRM;
                         _sapp_call_event(&_sapp.event);
                     }
                 }else{
+                    // printf("ELSE!!!!!!!!!!!!!!!!!!!\n");
                     _sapp_x11_process_event(&event);
                 }
             }
